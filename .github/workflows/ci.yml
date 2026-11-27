@@ -1,0 +1,91 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Run tests
+        run: PYTHONPATH=src python3 -m unittest discover -s tests
+
+      - name: CLI smoke test
+        run: |
+          clean_output="$(PYTHONPATH=src python3 -m pyshellcage audit --json -- git status)"
+          printf '%s\n' "$clean_output"
+          printf '%s' "$clean_output" | grep '"ok":true' >/dev/null
+
+          set +e
+          finding_output="$(PYTHONPATH=src python3 -m pyshellcage audit --json -- git clone --upload-pack=evil)"
+          finding_status=$?
+          set -e
+          printf '%s\n' "$finding_output"
+          if [ "$finding_status" -ne 1 ]; then
+            echo "dangerous audit did not exit 1"
+            exit 1
+          fi
+          printf '%s' "$finding_output" | grep 'PYSHELLCAGE_DANGEROUS_FLAG' >/dev/null
+
+          printf '{"PATH":"/bin"}' > "$RUNNER_TEMP/pyshellcage-env.json"
+          env_output="$(PYTHONPATH=src python3 -m pyshellcage audit-env --env-json "$RUNNER_TEMP/pyshellcage-env.json" --json)"
+          printf '%s\n' "$env_output"
+          printf '%s' "$env_output" | grep '"ok":true' >/dev/null
+          if printf '%s' "$env_output" | grep '/bin' >/dev/null; then
+            echo "audit-env output leaked an environment value"
+            exit 1
+          fi
+
+      - name: Install build tooling
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install build
+
+      - name: Build distributions
+        run: python3 -m build
+
+      - name: Verify clean distributions
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import tarfile
+          import zipfile
+
+          wheels = list(Path("dist").glob("*.whl"))
+          sdists = list(Path("dist").glob("*.tar.gz"))
+          if len(wheels) != 1 or len(sdists) != 1:
+              raise SystemExit("expected exactly one wheel and one source distribution")
+
+          with zipfile.ZipFile(wheels[0]) as wheel:
+              names = wheel.namelist()
+          if "pyshellcage/py.typed" not in names:
+              raise SystemExit("wheel is missing py.typed")
+          if any(name.startswith("tests/") for name in names):
+              raise SystemExit("wheel includes tests")
+          if any("__pycache__" in name or name.endswith((".pyc", ".pyo")) for name in names):
+              raise SystemExit("wheel includes bytecode cache files")
+
+          with tarfile.open(sdists[0]) as source_archive:
+              source_names = source_archive.getnames()
+          if not any(name.endswith("/src/pyshellcage/py.typed") for name in source_names):
+              raise SystemExit("source distribution is missing py.typed")
+          if any("__pycache__" in name or name.endswith((".pyc", ".pyo")) for name in source_names):
+              raise SystemExit("source distribution includes bytecode cache files")
+          PY
