@@ -333,7 +333,9 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn("runs-on: ubuntu-24.04", read(".github/workflows/ci.yml"))
 
     def test_ci_permissions_read_only(self):
-        self.assertIn("permissions:\n  contents: read", read(".github/workflows/ci.yml"))
+        text = read(".github/workflows/ci.yml")
+        self.assertIn("permissions: {}", text)
+        self.assertIn("permissions:\n      contents: read", text)
 
     def test_ci_runs_unittest(self):
         self.assertIn("python3 -m unittest discover -s tests", read(".github/workflows/ci.yml"))
@@ -368,7 +370,7 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn("name: pypi", read(".github/workflows/publish.yml"))
 
     def test_publish_action(self):
-        self.assertIn("pypa/gh-action-pypi-publish@release/v1", read(".github/workflows/publish.yml"))
+        self.assertIn("pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3", read(".github/workflows/publish.yml"))
 
     def test_publish_has_no_pypi_token(self):
         self.assertNotIn("PYPI_TOKEN", read(".github/workflows/publish.yml"))

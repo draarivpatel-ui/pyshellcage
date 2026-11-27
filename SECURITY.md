@@ -10,12 +10,11 @@
 
 Please do not open a public issue, pull request, or discussion for a suspected vulnerability.
 
-Report it privately through GitHub Security Advisories for this repository:
+Report it privately through the private security advisory form for this repository:
 
-1. Open the repository on GitHub.
-2. Select the Security tab.
-3. Select Report a vulnerability.
-4. Include a minimal reproducer, affected version, platform, Python version, and whether execution, validation, auditing, environment scrubbing, cwd containment, output bounding, or the CLI is affected.
+https://github.com/draarivpatel-ui/pyshellcage/security/advisories/new
+
+Include a minimal reproducer, affected version, platform, Python version, and whether execution, validation, auditing, environment scrubbing, cwd containment, output bounding, or the CLI is affected.
 
 If the issue involves a proof of concept, keep the payload benign. Do not include secrets, tokens, private paths, or real target infrastructure.
 
@@ -42,4 +41,4 @@ Out of scope:
 
 ## Response expectations
 
-We will acknowledge valid reports as quickly as practical, coordinate a fix, and credit reporters if they want credit. Do not disclose the issue publicly until a fix or coordinated advisory is available.
+Reports are acknowledged within 3 business days. Initial triage is targeted within 14 days. A fix, mitigation, or documented resolution is targeted within 90 days. Reporters are credited if they want credit. Do not disclose the issue publicly until a fix or coordinated advisory is available.
