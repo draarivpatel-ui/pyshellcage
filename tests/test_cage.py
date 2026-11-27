@@ -65,6 +65,12 @@ class ShellCageConstructionTests(unittest.TestCase):
         env["PATH"] = "/evil"
         self.assertEqual("/bin", cage.options["env"]["PATH"])
 
+    def test_nested_env_mapping_mutation_rejected(self):
+        cage = ShellCage(allow_executables=["tool"], env={"PATH": "/bin"})
+        with self.assertRaises(TypeError):
+            cage.options["env"]["PATH"] = "/evil"
+        self.assertEqual("/bin", cage.options["env"]["PATH"])
+
 
 class ShellCageMethodTests(unittest.TestCase):
     def test_validate_uses_base_allowlist(self):

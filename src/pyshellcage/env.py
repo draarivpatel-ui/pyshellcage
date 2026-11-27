@@ -92,9 +92,9 @@ _DANGEROUS_ENV_PREFIXES = (
     "LD_",
     "DYLD_",
     "BASH_FUNC_",
-    "GIT_CONFIG_",
-    "GIT_CONFIG_KEY_",
-    "GIT_CONFIG_VALUE_",
+    "PYTHON",
+    "NODE_",
+    "GIT_",
 )
 
 

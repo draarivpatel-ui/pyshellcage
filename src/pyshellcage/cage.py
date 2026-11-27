@@ -37,7 +37,7 @@ class ShellCage:
             elif isinstance(copied.get(key), tuple):
                 copied[key] = tuple(copied[key])
         if isinstance(copied.get("env"), Mapping):
-            copied["env"] = dict(copied["env"])
+            copied["env"] = MappingProxyType(dict(copied["env"]))
         object.__setattr__(self, "_options", MappingProxyType(copied))
 
     def __setattr__(self, name: str, value: Any) -> None:

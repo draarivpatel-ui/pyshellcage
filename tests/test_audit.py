@@ -287,15 +287,22 @@ _REMOTE_CASES = []
 for _tool in ("ssh", "scp", "sftp", "rsync"):
     _REMOTE_CASES.append((_tool, ["-o", "ProxyCommand=sh", "host"]))
     _REMOTE_CASES.append((_tool, ["-oProxyCommand=sh", "host"]))
+    _REMOTE_CASES.append((_tool, ["-4oProxyCommand=sh", "host"]))
     _REMOTE_CASES.append((_tool, ["-o", "PermitLocalCommand=yes", "host"]))
     _REMOTE_CASES.append((_tool, ["-e", "sh", "host"]))
     _REMOTE_CASES.append((_tool, ["-esh", "host"]))
+for _tool in ("ssh", "scp", "sftp"):
+    _REMOTE_CASES.append((_tool, ["-F", "attacker_config", "host"]))
+    _REMOTE_CASES.append((_tool, ["-4Fattacker_config", "host"]))
 _REMOTE_CASES.extend(
     [
+        ("rsync", ["-aze", "sh", "a", "b"]),
         ("rsync", ["--rsh", "sh", "a", "b"]),
         ("rsync", ["--rsh=sh", "a", "b"]),
         ("rsync", ["--rsync-path", "/tmp/evil", "a", "b"]),
         ("ssh", ["-S", "/tmp/socket", "host"]),
+        ("scp", ["-D", "server-command", "a", "b"]),
+        ("sftp", ["-D", "server-command", "host"]),
     ]
 )
 
@@ -313,17 +320,29 @@ class RuntimeDangerousMatrixTests(unittest.TestCase):
 
 _RUNTIME_CASES = []
 for _tool in ("node", "nodejs", "bun", "deno"):
-    for _args in (["-e", "code"], ["-p", "code"], ["--eval", "code"], ["--print", "code"], ["-r", "mod"], ["--require", "mod"], ["--import", "mod"], ["--experimental-loader", "mod"]):
+    for _args in (["-e", "code"], ["-p", "code"], ["-pe", "code"], ["--eval", "code"], ["--print", "code"], ["-r", "mod"], ["--require", "mod"], ["--import", "mod"], ["--experimental-loader", "mod"]):
         _RUNTIME_CASES.append((_tool, _args))
 for _tool in ("python", "python3", "python3.11", "pypy"):
-    for _args in (["-c", "code"], ["-m", "module"], ["-"]):
+    for _args in (["-c", "code"], ["-ccode"], ["-qc", "code"], ["-m", "module"], ["-mmodule"], ["-qmmodule"], ["-"]):
         _RUNTIME_CASES.append((_tool, _args))
 _RUNTIME_CASES.extend(
     [
         ("perl", ["-e", "code"]),
+        ("perl", ["-ecode"]),
+        ("perl", ["-we", "code"]),
+        ("perl", ["-E", "code"]),
+        ("perl", ["-Mmodule"]),
         ("ruby", ["-e", "code"]),
+        ("ruby", ["-ecode"]),
+        ("ruby", ["-we", "code"]),
         ("ruby", ["-r", "mod"]),
+        ("ruby", ["-rmod"]),
         ("php", ["-r", "code"]),
+        ("php", ["-rcode"]),
+        ("php", ["-qr", "code"]),
+        ("php", ["-B", "code"]),
+        ("php", ["-R", "code"]),
+        ("php", ["-E", "code"]),
     ]
 )
 
@@ -358,7 +377,8 @@ class ShellAndEnvGadgetMatrixTests(unittest.TestCase):
 
 _SHELL_ENV_CASES = []
 for _shell in ("sh", "bash", "zsh", "dash", "ksh", "csh", "fish"):
-    _SHELL_ENV_CASES.append((_shell, ["-c", "id"]))
+    for _args in (["-c", "id"], ["-ec", "id"], ["-ce", "id"]):
+        _SHELL_ENV_CASES.append((_shell, _args))
 _SHELL_ENV_CASES.extend(
     [
         ("cmd", ["/c", "calc"]),
@@ -369,9 +389,15 @@ _SHELL_ENV_CASES.extend(
         ("env", ["A=1", "id"]),
         ("env", ["--", "id"]),
         ("env", ["-u", "HOME", "id"]),
+        ("env", ["-uHOME", "id"]),
+        ("env", ["-uFOO", "echo"]),
+        ("env", ["-iuHOME", "id"]),
+        ("env", ["-C/tmp", "id"]),
         ("xargs", ["-I", "{}", "sh"]),
         ("xargs", ["-I{}", "sh"]),
+        ("xargs", ["-0I{}", "sh"]),
         ("xargs", ["-J", "%", "sh"]),
+        ("xargs", ["-0J%", "sh"]),
         ("xargs", ["--replace", "{}", "sh"]),
         ("xargs", ["--replace={}", "sh"]),
     ]

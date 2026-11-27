@@ -91,7 +91,7 @@ The important property is not the specific `git` invocation. It is that `user_co
 
 Child processes inherit more than data. Variables such as `LD_PRELOAD`, `DYLD_INSERT_LIBRARIES`, `PYTHONPATH`, `NODE_OPTIONS`, `RUBYOPT`, `PERL5OPT`, `JAVA_TOOL_OPTIONS`, `BASH_ENV`, `GIT_SSH_COMMAND`, and `GIT_CONFIG_PARAMETERS` can load code, replace helpers, or change runtime behavior before the child reaches its own entry point.
 
-`pyshellcage` starts from a minimal allowlist containing `PATH`, `HOME`, `LANG`, `LC_ALL`, and `TMPDIR`. On Windows it also includes `SYSTEMROOT` and `WINDIR`. It then applies a hard case-insensitive denylist covering dynamic linker variables, runtime preload variables, shell startup variables, editor and pager helpers, Git configuration and transport overrides, `COMSPEC`, and `PATHEXT`. A hard-denied name is removed even if a caller accidentally includes it in a custom allowlist.
+`pyshellcage` starts from a minimal allowlist containing `PATH`, `HOME`, `LANG`, `LC_ALL`, and `TMPDIR`. On Windows it also includes `SYSTEMROOT` and `WINDIR`. It then applies a hard case-insensitive denylist covering dynamic linker variables, `BASH_FUNC_*`, all `PYTHON*` and `NODE_*` runtime controls, all `GIT_*` variables, shell startup variables, editor and pager helpers, `COMSPEC`, and `PATHEXT`. A hard-denied name is removed even if a caller accidentally includes it in a custom allowlist.
 
 ### Windows batch, script, and path confusion
 
@@ -276,9 +276,9 @@ The detector covers high-risk flags and gadgets for tools including:
 - GNU `tar`: `--checkpoint-action` and abbreviations such as `--checkpoint-a`, `--to-command`, `-I`, compression helper flags, `--rsh-command`, `--rmt-command`, `--info-script`, and `--new-volume-script`. Benign `--checkpoint` is not flagged.
 - `find`: `-exec`, `-execdir`, `-ok`, and `-okdir`, including after `--`, because `find` does not treat `--` as the end of expression parsing.
 - `curl`: `-K`, `--config`, `-o`, `--output`, upload flags, and file-output flags.
-- `ssh`, `scp`, `sftp`, and `rsync`: `-o` proxy/local command gadgets, `-e`, `--rsh`, `--rsync-path`, and transport overrides.
+- `ssh`, `scp`, `sftp`, and `rsync`: `-o` proxy/local command gadgets including clustered forms, `-F` client configuration files, `-e`, `--rsh`, `--rsync-path`, and transport overrides.
 - JavaScript runtimes: eval, print, require, import, and loader flags for `node`, `nodejs`, `bun`, and `deno`.
-- Python runtimes: `-c`, `-m`, and stdin execution marker `-`.
+- Python runtimes: exact, attached, and clustered `-c` and `-m` forms, and stdin execution marker `-`.
 - PowerShell: abbreviated, slash-prefixed, and Unicode-dash forms of command execution flags.
 - Shell interpreters, `cmd`, `env`, and `xargs`.
 
@@ -359,7 +359,7 @@ Execution properties:
 - `stdin` may be text or bytes and is bounded by `max_stdin_bytes`.
 - stdout and stderr are read concurrently in bounded chunks.
 - If either cap is exceeded, the child is terminated immediately and the result keeps only bytes up to the cap.
-- If a cap cuts through a multibyte UTF-8 sequence, the incomplete trailing bytes are omitted so truncation does not create a replacement character from a valid sequence.
+- If a cap cuts through a multibyte UTF-8 sequence, the incomplete trailing bytes are omitted so truncation does not create a replacement character from a valid sequence. Undecodable bytes are omitted rather than expanded into replacement characters, preserving the hard byte bound after UTF-8 re-encoding.
 - On timeout, the child receives `terminate()`, then `kill()` after `kill_grace_seconds` if it does not exit.
 - `cwd` is resolved with `os.path.realpath()`. When `allowed_cwd_roots` is set, containment is checked with `os.path.commonpath([root, target]) == root`, which prevents sibling-prefix escapes such as `work-evil` and symlink escapes.
 
@@ -402,4 +402,4 @@ Run the standard-library test suite:
 PYTHONPATH=src python3 -m unittest discover -s tests
 ```
 
-The test suite contains more than 1,000 tests on the current source tree, including real subprocess integration tests, cwd symlink containment tests, multibyte output truncation tests, CLI file-type attacks, and tool-specific argument-injection matrices.
+The test suite contains exactly 1,221 tests on the current source tree, including real subprocess integration tests, cwd symlink containment tests, multibyte output truncation tests, CLI file-type attacks, and tool-specific argument-injection matrices.

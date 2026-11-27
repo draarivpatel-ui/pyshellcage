@@ -324,6 +324,31 @@ class SymlinkPolicyTests(unittest.TestCase):
         self.assertFalse(report.ok)
         self.assertIn(CODES["EXECUTABLE_ALLOWLIST_REQUIRED"], finding_codes(report))
 
+    @unittest.skipIf(os.name == "nt", "POSIX exact PATH lookup required")
+    @unittest.skipUnless(hasattr(os, "symlink"), "symlink support required")
+    def test_lowercase_path_entry_cannot_hide_uppercase_exec_path(self):
+        with tempfile.TemporaryDirectory() as directory:
+            good = os.path.join(directory, "good")
+            evil = os.path.join(directory, "evil")
+            os.makedirs(good)
+            os.makedirs(evil)
+            good_tool = os.path.join(good, "innocent")
+            Path(good_tool).write_text("#!/bin/sh\nexit 0\n", encoding="ascii")
+            os.chmod(good_tool, 0o755)
+            os.symlink("/bin/sh", os.path.join(evil, "innocent"))
+            report = validate_invocation(
+                ["innocent"],
+                allow_executables=["innocent"],
+                env={"path": good, "PATH": evil},
+            )
+        self.assertFalse(report.ok)
+        self.assertIn(CODES["SHELL_BINARY"], finding_codes(report))
+
+    def test_surrogate_allowlist_entry_is_structured_failure(self):
+        report = validate_invocation(["tool"], allow_executables=["tool" + chr(0xD800)])
+        self.assertFalse(report.ok)
+        self.assertIn(CODES["EXECUTABLE_ALLOWLIST_INVALID"], finding_codes(report))
+
 
 class ArgumentValidationInInvocationTests(unittest.TestCase):
     pass

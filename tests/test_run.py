@@ -160,6 +160,21 @@ class SafeRunTruncationTests(unittest.TestCase):
         self.assertLessEqual(len(result.stdout.encode("utf-8")), 4)
         self.assertTrue(result.truncated_stdout)
 
+    def test_invalid_utf8_exact_cap_does_not_expand_byte_cap(self):
+        code = "import sys;sys.stdout.buffer.write(b'\\xff')"
+        result = run_python(code, max_stdout_bytes=1)
+        self.assertNotIn("\ufffd", result.stdout)
+        self.assertLessEqual(len(result.stdout.encode("utf-8")), 1)
+        self.assertFalse(result.truncated_stdout)
+
+    def test_simultaneous_heavy_stdout_and_stderr_do_not_deadlock(self):
+        code = "import sys;[(sys.stdout.write('o'*1000),sys.stderr.write('e'*1000)) for i in range(100)];sys.stdout.flush();sys.stderr.flush()"
+        result = run_python(code, max_stdout_bytes=100000, max_stderr_bytes=100000, timeout_seconds=4)
+        self.assertEqual(0, result.exit_code)
+        self.assertEqual(100000, len(result.stdout.encode("utf-8")))
+        self.assertEqual(100000, len(result.stderr.encode("utf-8")))
+        self.assertFalse(result.timed_out)
+
     def test_cap_breach_kills_child(self):
         result = run_python("import sys,time;print('x' * 1000);sys.stdout.flush();time.sleep(10)", max_stdout_bytes=10)
         self.assertTrue(result.truncated_stdout)

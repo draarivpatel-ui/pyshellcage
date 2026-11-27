@@ -290,7 +290,11 @@ def _paths_equal(left: str, right: str) -> bool:
 def validate_allowlist_entry(entry: Any, index: int) -> Dict[str, str]:
     if not isinstance(entry, str) or entry == "":
         fail(CODES["EXECUTABLE_ALLOWLIST_INVALID"], "allowlist entries must be non-empty strings", {"index": index})
-    if utf8_len(entry) > MAX_EXECUTABLE_BYTES or "\x00" in entry or has_control_character(entry):
+    try:
+        entry_bytes = utf8_len(entry)
+    except UnicodeEncodeError:
+        fail(CODES["EXECUTABLE_ALLOWLIST_INVALID"], "allowlist entry contains an unpaired surrogate", {"index": index})
+    if entry_bytes > MAX_EXECUTABLE_BYTES or "\x00" in entry or has_control_character(entry):
         fail(CODES["EXECUTABLE_ALLOWLIST_INVALID"], "allowlist entry contains forbidden characters", {"index": index})
     basename = executable_basename(entry)
     if (
@@ -350,9 +354,27 @@ def _environment_path(env: Any) -> Tuple[Optional[str], bool]:
     if not isinstance(env, Mapping):
         return None, False
     for key, value in env.items():
-        if isinstance(key, str) and key.upper() == "PATH" and isinstance(value, str):
+        if not isinstance(key, str) or not isinstance(value, str):
+            continue
+        if os.name == "nt":
+            if key.upper() == "PATH":
+                return value, True
+        elif key == "PATH":
             return value, True
     return os.defpath, True
+
+
+def _resolution_environment(options: Mapping[str, Any], findings: List[Finding]) -> Any:
+    source = options.get("env") if "env" in options else os.environ
+    try:
+        return sanitize_env(
+            source,
+            allow_env=options.get("allow_env"),
+            max_value_bytes=options.get("max_env_value_bytes"),
+        )
+    except ShellCageError as error:
+        findings.append(_error_finding(error))
+        return None
 
 
 def resolve_bare_executable(command: str, env: Any = None) -> Optional[str]:
@@ -383,7 +405,7 @@ def inspect_executable_policy(
     if info.get("absolute"):
         resolved = _realpath_if_possible(command)
     elif not info.get("path_like"):
-        resolved = resolve_bare_executable(command, options.get("env"))
+        resolved = resolve_bare_executable(command, _resolution_environment(options, findings))
     if resolved:
         policy_names.add(windows_policy_basename(executable_basename(_realpath_if_possible(resolved))))
 
@@ -478,6 +500,82 @@ def _short_cluster_includes(raw: str, letter: str) -> bool:
     return raw.startswith("-") and not raw.startswith("--") and len(raw) > 2 and letter in raw[1:]
 
 
+def _single_dash_body(raw: str) -> str:
+    if not raw.startswith("-") or raw.startswith("--") or len(raw) < 2:
+        return ""
+    return raw[1:]
+
+
+def _short_option_position(raw: str, target: str, value_options: frozenset) -> Optional[int]:
+    body = _single_dash_body(raw)
+    for position, char in enumerate(body):
+        if char == target:
+            return position
+        if char in value_options:
+            return None
+    return None
+
+
+def _shell_command_option(raw: str) -> bool:
+    for char in _single_dash_body(raw):
+        if char == "c":
+            return True
+        if char in ("o", "O"):
+            return False
+    return False
+
+
+def _python_dangerous_option(raw: str) -> Optional[str]:
+    for char in _single_dash_body(raw):
+        if char in ("c", "m"):
+            return char
+        if char in ("W", "X"):
+            return None
+    return None
+
+
+def _perl_dangerous_option(raw: str) -> Optional[str]:
+    for char in _single_dash_body(raw):
+        if char in ("e", "E", "M", "m"):
+            return char
+        if char in ("C", "F", "I"):
+            return None
+    return None
+
+
+def _ruby_dangerous_option(raw: str) -> Optional[str]:
+    for char in _single_dash_body(raw):
+        if char in ("e", "r"):
+            return char
+        if char in ("C", "E", "F", "I", "K", "T", "W"):
+            return None
+    return None
+
+
+def _php_dangerous_option(raw: str) -> Optional[str]:
+    for char in _single_dash_body(raw):
+        if char in ("r", "R", "B", "E"):
+            return char
+        if char in ("c", "d", "f", "F", "S", "t", "z"):
+            return None
+    return None
+
+
+_REMOTE_VALUE_OPTIONS = {
+    "ssh": frozenset("BbcDEeFIiJLlmoOPpQRSWw"),
+    "scp": frozenset("cDFiJloPSX"),
+    "sftp": frozenset("BbcDFiJloPRSsX"),
+    "rsync": frozenset(),
+}
+
+
+def _remote_short_option(raw: str, tool: str, letter: str) -> Tuple[bool, bool]:
+    position = _short_option_position(raw, letter, _REMOTE_VALUE_OPTIONS.get(tool, frozenset()))
+    if position is None:
+        return False, False
+    return True, position == len(_single_dash_body(raw)) - 1
+
+
 def _powershell_option_token(raw: str) -> str:
     if not raw:
         return raw
@@ -508,7 +606,8 @@ def canonical_tool_name(command: str) -> str:
 
 def _env_nested_command(args: Sequence[str]) -> bool:
     assignment_re = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
-    options_with_values = {"-u", "--unset", "-C", "--chdir", "-S", "--split-string"}
+    long_options_with_values = {"--unset", "--chdir", "--split-string"}
+    short_options_with_values = frozenset("uCS")
     index = 0
     options_done = False
     while index < len(args):
@@ -517,11 +616,25 @@ def _env_nested_command(args: Sequence[str]) -> bool:
             options_done = True
             index += 1
             continue
-        if not options_done and raw.startswith("-") and raw != "-":
-            token = _long_option_token(raw) if raw.startswith("--") else raw[:2]
-            if token in options_with_values and "=" not in raw:
+        if not options_done and raw.startswith("--"):
+            token = _long_option_token(raw)
+            if token in long_options_with_values and "=" not in raw:
                 index += 2
             else:
+                index += 1
+            continue
+        if not options_done and raw.startswith("-") and raw != "-":
+            body = raw[1:]
+            consumed = False
+            for position, char in enumerate(body):
+                if char in short_options_with_values:
+                    if position == len(body) - 1:
+                        index += 2
+                    else:
+                        index += 1
+                    consumed = True
+                    break
+            if not consumed:
                 index += 1
             continue
         if assignment_re.match(raw):
@@ -566,7 +679,7 @@ def audit_dangerous_argv(command: str, args: Sequence[str]) -> List[Finding]:
             if is_powershell and _powershell_execution_token(raw):
                 _add_danger(findings, "critical", "PowerShell command execution flag detected", index, raw)
                 continue
-            if not is_powershell and tool != "cmd" and raw == "-c":
+            if not is_powershell and tool != "cmd" and _shell_command_option(raw):
                 _add_danger(findings, "critical", "shell interpreter command execution flag detected", index, raw)
                 continue
 
@@ -655,15 +768,25 @@ def audit_dangerous_argv(command: str, args: Sequence[str]) -> List[Finding]:
                 or "localcommand" in lower
                 or ("match" in lower and "exec" in lower)
             )
-            if raw == "-o" and proxy_in_next:
+            option_o, option_o_needs_next = _remote_short_option(raw, tool, "o")
+            proxy_option = option_o and ((option_o_needs_next and proxy_in_next) or proxy_in_raw)
+            config_present = tool in ("ssh", "scp", "sftp") and _remote_short_option(raw, tool, "F")[0]
+            transport_present = (
+                _remote_short_option(raw, tool, "e")[0]
+                or _long_flag(raw, "--rsh")
+                or _long_flag(raw, "--rsync-path")
+                or _remote_short_option(raw, tool, "S")[0]
+                or (tool in ("scp", "sftp") and _remote_short_option(raw, tool, "D")[0])
+            )
+            if proxy_option:
                 _add_danger(findings, "critical", "ssh option can execute a local proxy command", index, "-o")
-            elif _short_flag(raw, "-o") and proxy_in_raw:
-                _add_danger(findings, "critical", "ssh option can execute a local proxy command", index, "-o")
-            elif _short_flag(raw, "-e") or _long_flag(raw, "--rsh") or _long_flag(raw, "--rsync-path") or _short_flag(raw, "-S"):
+            elif config_present:
+                _add_danger(findings, "critical", "ssh client config file can contain a local proxy command", index, "-F")
+            elif transport_present:
                 _add_danger(findings, "critical", "remote shell or transport override can execute arbitrary commands", index, raw)
 
         if tool in ("node", "nodejs", "bun", "deno"):
-            if raw in ("-e", "-p") or _long_flag(raw, "--eval") or _long_flag(raw, "--print"):
+            if raw in ("-e", "-p", "-pe") or _long_flag(raw, "--eval") or _long_flag(raw, "--print"):
                 _add_danger(findings, "critical", "JavaScript runtime eval flag detected", index, raw)
             elif raw == "-r" or _long_flag(raw, "--require") or _long_flag(raw, "--import") or _long_flag(raw, "--experimental-loader"):
                 _add_danger(
@@ -675,24 +798,35 @@ def audit_dangerous_argv(command: str, args: Sequence[str]) -> List[Finding]:
                 )
 
         if re.match(r"^python(?:\d+(?:\.\d+)*)?$", tool) or tool == "pypy":
-            if raw == "-c":
-                _add_danger(findings, "critical", "Python -c executes attacker controlled code", index, "-c")
-            elif raw == "-m":
-                _add_danger(findings, "high", "Python -m executes a module selected by argv", index, "-m")
+            python_option = _python_dangerous_option(raw)
+            if python_option == "c":
+                _add_danger(findings, "critical", "Python -c executes attacker controlled code", index, raw)
+            elif python_option == "m":
+                _add_danger(findings, "high", "Python -m executes a module selected by argv", index, raw)
             elif raw == "-":
                 _add_danger(findings, "critical", "Python stdin execution marker detected", index, "-")
 
-        if tool == "perl" and raw == "-e":
-            _add_danger(findings, "critical", "Perl eval flag detected", index, "-e")
-        if tool == "ruby" and raw in ("-e", "-r"):
+        if tool == "perl":
+            perl_option = _perl_dangerous_option(raw)
+            if perl_option in ("e", "E"):
+                _add_danger(findings, "critical", "Perl eval flag detected", index, raw)
+            elif perl_option in ("M", "m"):
+                _add_danger(findings, "critical", "Perl module preload flag can execute attacker controlled code", index, raw)
+        if tool == "ruby" and _ruby_dangerous_option(raw) is not None:
             _add_danger(findings, "critical", "Ruby eval or require flag detected", index, raw)
-        if tool == "php" and raw == "-r":
-            _add_danger(findings, "critical", "PHP eval flag detected", index, "-r")
+        if tool == "php" and _php_dangerous_option(raw) is not None:
+            _add_danger(findings, "critical", "PHP inline code execution flag detected", index, raw)
 
         if tool == "env" and (_short_flag(raw, "-S") or _long_flag(raw, "--split-string")):
             _add_danger(findings, "high", "env split-string mode can hide a nested command inside one argument", index, raw)
 
-        if tool == "xargs" and (_short_flag(raw, "-I") or _short_flag(raw, "-J") or _long_flag(raw, "--replace")):
+        if tool == "xargs" and (
+            _short_flag(raw, "-I")
+            or _short_cluster_includes(raw, "I")
+            or _short_flag(raw, "-J")
+            or _short_cluster_includes(raw, "J")
+            or _long_flag(raw, "--replace")
+        ):
             _add_danger(findings, "high", "xargs replacement mode can turn stdin into command arguments", index, raw)
 
     if tool == "env" and _env_nested_command(args):

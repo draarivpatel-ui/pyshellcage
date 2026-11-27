@@ -86,6 +86,8 @@ jobs:
               source_names = source_archive.getnames()
           if not any(name.endswith("/src/pyshellcage/py.typed") for name in source_names):
               raise SystemExit("source distribution is missing py.typed")
+          if not any(name.endswith("/tests/_matrix.py") for name in source_names):
+              raise SystemExit("source distribution is missing the unittest matrix helper")
           if any("__pycache__" in name or name.endswith((".pyc", ".pyo")) for name in source_names):
               raise SystemExit("source distribution includes bytecode cache files")
           PY

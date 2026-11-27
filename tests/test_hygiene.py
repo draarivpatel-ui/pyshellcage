@@ -281,6 +281,7 @@ _REQUIRED_FILES = [
     "CONTRIBUTING.md",
     "SECURITY.md",
     "LICENSE",
+    "MANIFEST.in",
     "docs/GOOD_FIRST_ISSUES.md",
     ".github/PULL_REQUEST_TEMPLATE.md",
     ".github/ISSUE_TEMPLATE/bug_report.md",
@@ -353,6 +354,9 @@ class WorkflowTests(unittest.TestCase):
         text = read(".github/workflows/ci.yml")
         self.assertIn("wheel includes tests", text)
         self.assertIn("wheel includes bytecode cache files", text)
+
+    def test_ci_verifies_sdist_test_helper(self):
+        self.assertIn("tests/_matrix.py", read(".github/workflows/ci.yml"))
 
     def test_publish_ubuntu_2404(self):
         self.assertIn("runs-on: ubuntu-24.04", read(".github/workflows/publish.yml"))

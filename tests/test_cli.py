@@ -201,6 +201,26 @@ class EnvJsonCliTests(unittest.TestCase):
         self.assertEqual(2, status)
         self.assertIn("object", stderr)
 
+    def test_nonfinite_json_numbers_rejected(self):
+        for constant in ("NaN", "Infinity", "-Infinity"):
+            with self.subTest(constant=constant):
+                with tempfile.TemporaryDirectory() as directory:
+                    path = self.write_json(directory, '{"PATH":' + constant + '}')
+                    status, stdout, stderr = run_cli(["audit-env", "--env-json", path])
+                self.assertEqual(2, status)
+                self.assertEqual("", stdout)
+                self.assertNotIn("Traceback", stderr)
+
+    def test_deep_json_nesting_rejected_without_traceback(self):
+        nested = '{"a":' * 140 + '0' + '}' * 140
+        with tempfile.TemporaryDirectory() as directory:
+            path = self.write_json(directory, nested)
+            status, stdout, stderr = run_cli(["audit-env", "--env-json", path])
+        self.assertEqual(2, status)
+        self.assertEqual("", stdout)
+        self.assertIn("depth limit", stderr)
+        self.assertNotIn("Traceback", stderr)
+
     def test_invalid_utf8_usage_error(self):
         with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, "env.json")
@@ -300,6 +320,16 @@ class TerminalSafetyTests(unittest.TestCase):
         self.assertEqual(1, status)
         self.assertNotIn(escape, stdout)
         self.assertNotIn(bidi, stdout)
+
+    def test_argparse_error_neutralizes_escape_newline_and_bidi(self):
+        escape = chr(27)
+        bidi = chr(0x202E)
+        status, stdout, stderr = run_cli(["--bad" + escape + "[31m\n" + bidi])
+        self.assertEqual(2, status)
+        self.assertEqual("", stdout)
+        self.assertNotIn(escape, stderr)
+        self.assertNotIn(bidi, stderr)
+        self.assertNotIn("[31m\n", stderr)
 
 
 if __name__ == "__main__":

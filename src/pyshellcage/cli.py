@@ -16,6 +16,7 @@ from .errors import CODES, ShellCageError, fail
 from .invocation import audit_argv
 
 MAX_ENV_JSON_BYTES = 1024 * 1024
+MAX_ENV_JSON_DEPTH = 128
 
 
 def neutralize_terminal_text(value: Any) -> str:
@@ -32,8 +33,14 @@ def neutralize_terminal_text(value: Any) -> str:
     return "".join(output)
 
 
+class PyshellcageArgumentParser(argparse.ArgumentParser):
+    def error(self, message: str) -> None:
+        self.print_usage(sys.stderr)
+        self.exit(2, self.prog + ": error: " + neutralize_terminal_text(message) + "\n")
+
+
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+    parser = PyshellcageArgumentParser(
         prog="pyshellcage",
         description="Audit argv and environment input without invoking a shell.",
         allow_abbrev=False,
@@ -138,15 +145,45 @@ def _secure_read_env_json(path: str, max_bytes: int = MAX_ENV_JSON_BYTES) -> byt
             pass
 
 
+def _reject_json_constant(value: str) -> None:
+    raise ValueError("non-finite JSON number")
+
+
+def _json_nesting_depth_exceeded(text: str, max_depth: int) -> bool:
+    depth = 0
+    in_string = False
+    escaped = False
+    for char in text:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char in "[{":
+            depth += 1
+            if depth > max_depth:
+                return True
+        elif char in "]}":
+            depth = max(0, depth - 1)
+    return False
+
+
 def _load_env_json(path: str) -> Mapping[str, Any]:
     raw = _secure_read_env_json(path)
     try:
         text = raw.decode("utf-8", errors="strict")
     except UnicodeDecodeError:
         fail(CODES["CONFIG_INVALID"], "environment JSON file must be valid UTF-8")
+    if _json_nesting_depth_exceeded(text, MAX_ENV_JSON_DEPTH):
+        fail(CODES["CONFIG_INVALID"], "environment JSON file exceeds the nesting depth limit")
     try:
-        parsed = json.loads(text)
-    except ValueError:
+        parsed = json.loads(text, parse_constant=_reject_json_constant)
+    except (ValueError, RecursionError):
         fail(CODES["CONFIG_INVALID"], "environment JSON file must contain a JSON object")
     if not isinstance(parsed, dict):
         fail(CODES["CONFIG_INVALID"], "environment JSON file must contain a JSON object")

@@ -186,11 +186,10 @@ def decode_captured_utf8(data: bytes, truncated: bool) -> str:
         incomplete = incomplete_utf8_suffix_length(data)
         if incomplete:
             data = data[:-incomplete]
-        # A byte cap is a hard byte cap. Replacement characters can expand one
-        # invalid input byte into three output bytes, so truncated output drops
-        # undecodable bytes instead of decoding them to U+FFFD.
-        return data.decode("utf-8", errors="ignore")
-    return data.decode("utf-8", errors="replace")
+    # A byte cap is a hard byte cap. Replacement characters can expand one
+    # invalid input byte into three output bytes, so undecodable bytes are
+    # omitted instead of decoded to U+FFFD.
+    return data.decode("utf-8", errors="ignore")
 
 
 def _os_error_failure(error: BaseException) -> ShellCageError:
